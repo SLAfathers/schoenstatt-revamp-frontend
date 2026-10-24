@@ -30,6 +30,7 @@ import {
   X,
   Save,
   Loader2,
+  Camera,
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -212,6 +213,20 @@ function NewStudentContent() {
             </CardHeader>
             <CardContent className="p-6">
               <div className="space-y-4">
+                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <Camera
+                    className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600"
+                    aria-hidden
+                  />
+                  <p>
+                    <strong className="font-semibold">
+                      Passport-size photo only
+                    </strong>{" "}
+                    — looking straight at the camera, face and shoulders
+                    visible, plain light background. No casual photos, selfies
+                    or group shots.
+                  </p>
+                </div>
                 <div className="flex items-center justify-center w-full">
                   <label
                     htmlFor="photo"

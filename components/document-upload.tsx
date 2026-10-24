@@ -2,7 +2,23 @@
 
 import React, { useRef, useState, useCallback } from "react";
 import { PDFDocument } from "pdf-lib";
-import { Upload, X, FileText, AlertCircle, RotateCcw } from "lucide-react";
+import {
+  Upload,
+  X,
+  FileText,
+  AlertCircle,
+  RotateCcw,
+  Check,
+  Camera,
+} from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   compressFile,
   compressImage,
@@ -18,6 +34,8 @@ export interface DocumentUploadProps {
 export interface PhotoUploadProps {
   onFileChange: (file: File | null) => void;
   disabled?: boolean;
+  /** Show the passport-photo guide before upload. Defaults to true; admins turn it off. */
+  showGuide?: boolean;
 }
 
 const MAX_INPUT = 10 * 1024 * 1024; // 10 MB — max size we accept from the user
@@ -221,6 +239,8 @@ export interface UploadBoxProps {
   inputRef: React.RefObject<HTMLInputElement>;
   accept?: string;
   hint?: string;
+  /** Optional notice shown above the drop zone until a file is chosen. */
+  guidelines?: React.ReactNode;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: () => void;
   onDrop: (e: React.DragEvent) => void;
@@ -240,6 +260,7 @@ export function UploadBox({
   inputRef,
   accept = ".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf",
   hint = "JPG, JPEG, PNG, PDF · max 2.5 MB",
+  guidelines,
   onDragOver,
   onDragLeave,
   onDrop,
@@ -259,6 +280,8 @@ export function UploadBox({
           <span className="text-gray-500 text-xs">Optional</span>
         )}
       </p>
+
+      {guidelines && !fileState && !uploading && guidelines}
 
       {uploading ? (
         <div className="border-2 border-dashed border-purple-400/30 rounded-xl p-5 text-center bg-purple-400/5">
@@ -708,15 +731,185 @@ const PHOTO_ACCEPTED_MIME = [
 const PHOTO_MAX_INPUT = 10 * 1024 * 1024; // 10 MB — max size we accept from the user
 const PHOTO_TARGET_SIZE = 2 * 1024 * 1024; // 1 MB — target size after compression (photo is only 130x130px in PDF)
 
+const PHOTO_DOS = [
+  "Passport-size, looking straight at the camera",
+  "Face and shoulders clearly visible",
+  "Plain white or light background, good lighting",
+];
+
+/** Compact reminder shown inline; the full guide opens in a modal. */
+function PhotoGuidelinesNote({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="w-full flex items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/[0.07] px-3 py-2 text-left text-xs text-amber-100 hover:bg-amber-400/10 transition-colors touch-manipulation"
+    >
+      <Camera className="h-4 w-4 flex-shrink-0 text-amber-300" aria-hidden />
+      <span className="flex-1">
+        <strong className="font-semibold text-amber-200">
+          Passport-size photo only
+        </strong>{" "}
+        — no casual photos, selfies or group shots.
+      </span>
+      <span className="flex-shrink-0 underline underline-offset-2 text-amber-300">
+        See example
+      </span>
+    </button>
+  );
+}
+
+function PhotoExample({
+  ok,
+  label,
+  children,
+}: {
+  ok: boolean;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <figure className="min-w-0 text-center">
+      <div
+        className={`relative overflow-hidden rounded-lg border-2 ${
+          ok ? "border-emerald-400" : "border-red-400/60"
+        }`}
+      >
+        <svg
+          viewBox="0 0 60 80"
+          className="block w-full h-auto bg-white"
+          role="img"
+          aria-label={label}
+        >
+          {children}
+        </svg>
+        <span
+          className={`absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full ${
+            ok ? "bg-emerald-500" : "bg-red-500"
+          }`}
+        >
+          {ok ? (
+            <Check className="h-3 w-3 text-white" aria-hidden />
+          ) : (
+            <X className="h-3 w-3 text-white" aria-hidden />
+          )}
+        </span>
+      </div>
+      <figcaption
+        className={`mt-1.5 text-[11px] leading-tight ${
+          ok ? "text-emerald-300" : "text-red-300"
+        }`}
+      >
+        {label}
+      </figcaption>
+    </figure>
+  );
+}
+
+function PhotoGuidelinesDialog({
+  open,
+  onOpenChange,
+  onContinue,
+  hasDroppedFile,
+}: {
+  hasDroppedFile: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onContinue: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto bg-gradient-to-br from-slate-900 via-slate-900 to-purple-950 border border-purple-400/20 text-white">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-lg text-white">
+            <Camera className="h-5 w-5 text-purple-300" aria-hidden />
+            Before you upload your photo
+          </DialogTitle>
+          <DialogDescription className="text-gray-300">
+            Please upload a <strong>passport-size photo</strong> of yourself.
+            Casual photos will be rejected and you&apos;ll be asked to upload
+            again.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-4 gap-2">
+          <PhotoExample ok label="Good">
+            <ellipse cx="30" cy="32" rx="12" ry="15" fill="#cbd5e1" />
+            <path d="M6 80c0-16 10-24 24-24s24 8 24 24z" fill="#94a3b8" />
+          </PhotoExample>
+          <PhotoExample ok={false} label="Group / casual">
+            <rect width="60" height="80" fill="#fde68a" />
+            <ellipse cx="20" cy="38" rx="9" ry="11" fill="#cbd5e1" />
+            <ellipse cx="42" cy="34" rx="9" ry="11" fill="#cbd5e1" />
+            <path d="M2 80c0-12 8-18 18-18s18 6 18 18z" fill="#94a3b8" />
+            <path d="M26 80c0-12 6-20 16-20s16 8 16 20z" fill="#64748b" />
+          </PhotoExample>
+          <PhotoExample ok={false} label="Shades / cap">
+            <ellipse cx="30" cy="34" rx="12" ry="15" fill="#cbd5e1" />
+            <path d="M16 28a14 12 0 0 1 28 0z" fill="#475569" />
+            <rect x="19" y="32" width="22" height="5" rx="2" fill="#0f172a" />
+            <path d="M6 80c0-16 10-24 24-24s24 8 24 24z" fill="#94a3b8" />
+          </PhotoExample>
+          <PhotoExample ok={false} label="Full body">
+            <circle cx="30" cy="14" r="5" fill="#cbd5e1" />
+            <rect x="24" y="20" width="12" height="24" rx="3" fill="#94a3b8" />
+            <rect x="24" y="44" width="5" height="26" fill="#64748b" />
+            <rect x="31" y="44" width="5" height="26" fill="#64748b" />
+          </PhotoExample>
+        </div>
+
+        <ul className="space-y-1.5">
+          {PHOTO_DOS.map((item) => (
+            <li
+              key={item}
+              className="flex items-start gap-2 text-sm text-gray-200"
+            >
+              <Check
+                className="h-4 w-4 flex-shrink-0 mt-0.5 text-emerald-400"
+                aria-hidden
+              />
+              {item}
+            </li>
+          ))}
+        </ul>
+
+        <DialogFooter className="gap-2 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="px-4 py-2.5 rounded-lg border border-white/15 text-sm text-white/80 hover:bg-white/5 transition-colors touch-manipulation"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onContinue}
+            className="px-4 py-2.5 rounded-lg bg-purple-500 hover:bg-purple-400 text-sm font-semibold text-white transition-colors touch-manipulation inline-flex items-center justify-center gap-2"
+          >
+            <Upload className="h-4 w-4" aria-hidden />
+            {hasDroppedFile
+              ? "I understand, use this photo"
+              : "I understand, choose photo"}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function PhotoUpload({
   onFileChange,
   disabled = false,
+  showGuide = true,
 }: PhotoUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileState, setFileState] = useState<FileState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  // File dropped onto the box, held until the student confirms the guide.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -763,10 +956,15 @@ export function PhotoUpload({
     if (inputRef.current) inputRef.current.value = "";
   };
 
+  const openPicker = () => {
+    if (showGuide) setGuideOpen(true);
+    else inputRef.current?.click();
+  };
+
   return (
     <div className="space-y-2">
       <UploadBox
-        label="Profile Photo"
+        label="Profile Photo (Passport size)"
         required
         fileState={fileState}
         isDragging={isDragging}
@@ -774,6 +972,11 @@ export function PhotoUpload({
         inputRef={inputRef}
         accept="image/jpeg,image/jpg,image/png,image/webp"
         hint="JPG, PNG, WebP · max 10 MB (auto-compressed)"
+        guidelines={
+          showGuide ? (
+            <PhotoGuidelinesNote onOpen={() => setGuideOpen(true)} />
+          ) : undefined
+        }
         onDragOver={(e) => {
           e.preventDefault();
           setIsDragging(true);
@@ -783,13 +986,36 @@ export function PhotoUpload({
           e.preventDefault();
           setIsDragging(false);
           const file = e.dataTransfer.files?.[0];
-          if (file) handleFile(file);
+          if (!file) return;
+          if (showGuide) {
+            setPendingFile(file);
+            setGuideOpen(true);
+          } else {
+            handleFile(file);
+          }
         }}
-        onClick={() => inputRef.current?.click()}
+        onClick={openPicker}
         onRemove={removeFile}
-        onReplace={() => inputRef.current?.click()}
+        onReplace={openPicker}
         disabled={disabled || processing}
         uploading={processing}
+      />
+      <PhotoGuidelinesDialog
+        open={showGuide && guideOpen}
+        hasDroppedFile={pendingFile !== null}
+        onOpenChange={(open) => {
+          setGuideOpen(open);
+          if (!open) setPendingFile(null);
+        }}
+        onContinue={() => {
+          setGuideOpen(false);
+          if (pendingFile) {
+            handleFile(pendingFile);
+            setPendingFile(null);
+          } else {
+            inputRef.current?.click();
+          }
+        }}
       />
       <input
         ref={inputRef}
