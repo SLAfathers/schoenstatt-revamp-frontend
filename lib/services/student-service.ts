@@ -224,4 +224,22 @@ export const studentService = {
     // Fetch updated student
     return this.getOne(documentId);
   },
+
+  // Replace only the profile photo of an existing student (admin side)
+  async updatePhoto(documentId: string, file: File): Promise<StrapiStudent> {
+    const formData = new FormData();
+    formData.append("photo", file);
+
+    const response = await strapiClient.put(
+      `/students/${documentId}/photo`,
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+        timeout: 180000,
+      },
+    );
+    return response.data.data;
+  },
 };

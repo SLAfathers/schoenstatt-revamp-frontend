@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CurrentYear } from "@/components/layout/current-year";
 import {
   Facebook,
   Instagram,
@@ -172,7 +173,7 @@ export function Footer() {
         <div className="border-t border-white/10 mt-12 sm:mt-16 pt-6 sm:pt-8">
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4 text-center sm:text-left">
             <p className="text-xs sm:text-sm text-gray-400">
-              © 2025 {SITE_CONFIG.name}. All rights reserved. | Crafted by
+              © <CurrentYear /> {SITE_CONFIG.name}. All rights reserved. | Crafted by
               Spectra Tech
             </p>
             <div className="text-xs sm:text-sm text-gray-400">

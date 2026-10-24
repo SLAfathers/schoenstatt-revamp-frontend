@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { StrapiProtectedRoute } from "@/components/strapi-protected-route";
 import { studentService } from "@/lib/services/student-service";
@@ -30,7 +30,18 @@ import {
   FileText,
   Loader2,
   Megaphone,
+  Camera,
+  Image as ImageIcon,
+  ChevronDown,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Suspense } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
@@ -74,6 +85,8 @@ function StudentDetailContent() {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [downloadingPhoto, setDownloadingPhoto] = useState(false);
   const [downloadingIdProof, setDownloadingIdProof] = useState(false);
+  const [updatingPhoto, setUpdatingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [sendEmailModalOpen, setSendEmailModalOpen] = useState(false);
   const [sendEmailRecipient, setSendEmailRecipient] = useState<
     "student" | "admin" | "both"
@@ -123,6 +136,37 @@ function StudentDetailContent() {
     } catch (error) {
       console.error("Error deleting student:", error);
       alert("Failed to delete student");
+    }
+  };
+
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset so selecting the same file again still triggers onChange
+    e.target.value = "";
+    if (!file || !student) return;
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      alert("Invalid file type. Please upload a JPG, PNG, or WebP image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("File size too large. Please upload an image smaller than 5MB.");
+      return;
+    }
+
+    setUpdatingPhoto(true);
+    try {
+      await studentService.updatePhoto(student.documentId, file);
+      await queryClient.invalidateQueries({ queryKey: ["student", documentId] });
+      queryClient.invalidateQueries({ queryKey: ["students"] });
+    } catch (error: any) {
+      console.error("Error updating photo:", error);
+      alert(
+        error?.response?.data?.error?.message ||
+          "Failed to update photo. Please try again.",
+      );
+    } finally {
+      setUpdatingPhoto(false);
     }
   };
 
@@ -366,78 +410,80 @@ function StudentDetailContent() {
                 <p className="text-xs text-blue-300">Student Profile</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <Badge
                 className={`${getStatusColor(student.statuses)} border font-medium`}
               >
                 {student.statuses?.charAt(0).toUpperCase() +
                   student.statuses?.slice(1)}
               </Badge>
-              <Button
-                onClick={downloadStudentPdf}
-                variant="outline"
-                size="sm"
-                disabled={downloadingPdf}
-                className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
-              >
-                {downloadingPdf ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Download className="h-4 w-4 mr-2" />
-                    Student Detail
-                  </>
-                )}
-              </Button>
-              {student.photo && (
-                <Button
-                  onClick={downloadPhoto}
-                  disabled={downloadingPhoto}
-                  variant="outline"
-                  size="sm"
-                  className="bg-white/10 border-white/20 text-white hover:bg-white/20 disabled:opacity-50"
-                  title="Download Photo"
+              <div className="h-6 w-px bg-blue-700/30 hidden sm:block" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    disabled={downloadingPdf || downloadingPhoto || downloadingIdProof}
+                    className="h-10 gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-sm disabled:opacity-60"
+                  >
+                    {downloadingPdf || downloadingPhoto || downloadingIdProof ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    <span className="hidden sm:inline">Download</span>
+                    <ChevronDown className="h-4 w-4 opacity-80" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="end"
+                  className="w-56 bg-slate-900 border-blue-800/40 text-white"
                 >
-                  {downloadingPhoto ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4" />
+                  <DropdownMenuLabel className="text-xs text-blue-300">
+                    Download as
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator className="bg-white/10" />
+                  <DropdownMenuItem
+                    onSelect={downloadStudentPdf}
+                    disabled={downloadingPdf}
+                    className="gap-2 cursor-pointer focus:bg-white/10 focus:text-white"
+                  >
+                    <FileText className="h-4 w-4 text-blue-400" />
+                    {downloadingPdf ? "Generating..." : "Student Detail (PDF)"}
+                  </DropdownMenuItem>
+                  {student.photo && (
+                    <DropdownMenuItem
+                      onSelect={downloadPhoto}
+                      disabled={downloadingPhoto}
+                      className="gap-2 cursor-pointer focus:bg-white/10 focus:text-white"
+                    >
+                      <ImageIcon className="h-4 w-4 text-blue-400" />
+                      {downloadingPhoto ? "Downloading..." : "Photo"}
+                    </DropdownMenuItem>
                   )}
-                </Button>
-              )}
-              {student.aadhaarFile?.url && (
-                <Button
-                  onClick={downloadIdProof}
-                  disabled={downloadingIdProof}
-                  variant="outline"
-                  size="sm"
-                  className="bg-amber-600/80 hover:bg-amber-600 text-white border-amber-600 disabled:opacity-50"
-                  title="Download ID Proof"
-                >
-                  {downloadingIdProof ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <FileText className="h-4 w-4 mr-2" />
+                  {student.aadhaarFile?.url && (
+                    <DropdownMenuItem
+                      onSelect={downloadIdProof}
+                      disabled={downloadingIdProof}
+                      className="gap-2 cursor-pointer focus:bg-white/10 focus:text-white"
+                    >
+                      <FileText className="h-4 w-4 text-amber-400" />
+                      {downloadingIdProof ? "Downloading..." : "ID Proof"}
+                    </DropdownMenuItem>
                   )}
-                  ID Proof
-                </Button>
-              )}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 onClick={() => {
                   setSendEmailRecipient("both");
                   setEmailNotification(null);
                   setSendEmailModalOpen(true);
                 }}
-                variant="outline"
                 size="sm"
-                className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
+                className="h-10 gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow-sm"
                 title="Send Registration Email"
               >
-                <Mail className="h-4 w-4 mr-2" />
-                Send Email
+                <Mail className="h-4 w-4" />
+                <span className="hidden sm:inline">Send Email</span>
               </Button>
               {/* <Button
                 variant="outline"
@@ -482,6 +528,34 @@ function StudentDetailContent() {
                     <User className="h-16 w-16 text-slate-500" />
                   </div>
                 )}
+              </div>
+              <div className="p-3 border-t border-blue-500/20 print:hidden">
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={handlePhotoChange}
+                />
+                <Button
+                  onClick={() => photoInputRef.current?.click()}
+                  disabled={updatingPhoto}
+                  variant="outline"
+                  size="sm"
+                  className="w-full bg-white/10 border-white/20 text-white hover:bg-white/20 disabled:opacity-50"
+                >
+                  {updatingPhoto ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="h-4 w-4 mr-2" />
+                      {student.photo ? "Change Photo" : "Upload Photo"}
+                    </>
+                  )}
+                </Button>
               </div>
               <div className="p-4 text-center border-t border-blue-500/20">
                 <h2 className="font-semibold text-white">
