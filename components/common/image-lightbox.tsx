@@ -7,6 +7,8 @@ import { X, ChevronLeft, ChevronRight } from "lucide-react";
 export interface LightboxImage {
   id: string | number;
   src: string;
+  /** Small version for the thumbnail strip; falls back to `src`. */
+  thumbSrc?: string;
   alt: string;
   title?: string;
   description?: string;
@@ -204,9 +206,11 @@ export function ImageLightbox({
                       }`}
                     >
                       <img
-                        src={img.src || "/placeholder.svg"}
+                        src={img.thumbSrc || img.src || "/placeholder.svg"}
                         alt={img.alt}
-                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover bg-white/5"
                       />
                     </button>
                   ))}

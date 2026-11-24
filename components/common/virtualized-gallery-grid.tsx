@@ -1,12 +1,15 @@
 "use client"
 
-import { useRef, useEffect, useState } from "react"
+import { useRef, useEffect, useLayoutEffect, useState } from "react"
 import { useWindowVirtualizer } from "@tanstack/react-virtual"
 import { GalleryCardSkeleton } from "./gallery-card-skeleton"
 
 interface VirtualizedGalleryGridProps<T> {
   items: T[];
   renderItem: (item: T, index: number) => React.ReactNode;
+  /** Stable key per item so cards don't inherit state from a previous item
+   *  when the list changes (e.g. switching categories). Defaults to index. */
+  getItemKey?: (item: T, index: number) => string | number;
   isLoading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
@@ -28,6 +31,7 @@ interface VirtualizedGalleryGridProps<T> {
 export function VirtualizedGalleryGrid<T>({
   items,
   renderItem,
+  getItemKey,
   isLoading,
   hasMore,
   onLoadMore,
@@ -73,11 +77,30 @@ export function VirtualizedGalleryGrid<T>({
     return () => window.removeEventListener('resize', handleResize);
   }, [columnCount]);
 
+  // Distance from the top of the document to the grid. Measured after layout
+  // (the ref is null on the first render, and offsetTop is relative to the
+  // nearest positioned ancestor), otherwise the virtualizer computes the wrong
+  // visible range and can render nothing until the user scrolls.
+  const [scrollMargin, setScrollMargin] = useState(0);
+  const hasItems = items.length > 0;
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = parentRef.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      setScrollMargin((prev) => (Math.abs(prev - top) > 1 ? top : prev));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [hasItems]);
+
   const rowVirtualizer = useWindowVirtualizer({
     count: Math.ceil(items.length / columnCount),
     estimateSize: () => estimateSize + rowGap,
     overscan,
-    scrollMargin: parentRef.current?.offsetTop ?? 0,
+    scrollMargin,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -102,7 +125,11 @@ export function VirtualizedGalleryGrid<T>({
   // Initial loading state
   if (isLoading && items.length === 0) {
     return (
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <div
+        className="grid gap-6"
+        style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
+        aria-busy="true"
+      >
         {loadingComponent || <GalleryCardSkeleton count={8} aspectRatio={aspectRatio} />}
       </div>
     );
@@ -148,7 +175,7 @@ export function VirtualizedGalleryGrid<T>({
               {rowItems.map((item, colIndex) => {
                 const itemIndex = startIndex + colIndex;
                 return (
-                  <div key={itemIndex}>
+                  <div key={getItemKey ? getItemKey(item, itemIndex) : itemIndex}>
                     {renderItem(item, itemIndex)}
                   </div>
                 );
