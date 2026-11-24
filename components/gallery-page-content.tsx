@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, memo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import {
   Camera,
   Users,
@@ -19,7 +19,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useApiStore } from "@/lib/stores/api-store";
-import { getStrapiBaseUrl } from "@/lib/constants";
+import {
+  pickStrapiImage,
+  resolveStrapiUrl,
+  strapiSrcSet,
+} from "@/lib/strapi-image";
 import Link from "next/link";
 import { DateDisplay } from "./common/date-display";
 import { GalleryCardSkeleton } from "@/components/common/gallery-card-skeleton";
@@ -38,7 +42,15 @@ interface GalleryImageCardProps {
   index: number;
   aspectRatioClass: string;
   onOpen: (index: number) => void;
+  priority?: boolean;
+  sizes: string;
 }
+
+// Minimum number of photos a category should show before we stop pulling
+// extra pages in the background. Galleries are paginated server-side (newest
+// first) but filtered by category client-side, so a category whose albums are
+// older (e.g. "Memories") can have zero matches in the first pages.
+const MIN_VISIBLE_IMAGES = 8;
 
 // Memoized so that scrolling/loading more images doesn't re-render every
 // previously mounted card - critical once the gallery holds 1000+ images.
@@ -47,9 +59,19 @@ const GalleryImageCard = memo(function GalleryImageCard({
   index,
   aspectRatioClass,
   onOpen,
+  priority = false,
+  sizes,
 }: GalleryImageCardProps) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  // Images already in the browser cache can finish before React attaches
+  // onLoad; check `complete` so they don't stay hidden behind the skeleton.
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img?.complete && img.naturalWidth > 0) setLoaded(true);
+  }, []);
 
   return (
     <div
@@ -59,10 +81,15 @@ const GalleryImageCard = memo(function GalleryImageCard({
       <div className="absolute -inset-1 bg-gradient-to-r from-purple-400 to-blue-500 rounded-2xl blur-lg opacity-0 group-hover:opacity-30 transition-all duration-500"></div>
       <div className="relative bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden hover:bg-white/10 transition-all duration-500 hover:scale-105">
         <div
-          className={`${aspectRatioClass} bg-black flex items-center justify-center relative overflow-hidden`}
+          className={`${aspectRatioClass} bg-white/5 flex items-center justify-center relative overflow-hidden`}
         >
           {!loaded && !errored && (
-            <div className="absolute inset-0 bg-white/5 animate-pulse" />
+            <div
+              className="absolute inset-0 flex items-center justify-center bg-white/10 animate-pulse motion-reduce:animate-none"
+              aria-hidden="true"
+            >
+              <Camera className="h-10 w-10 text-white/20" />
+            </div>
           )}
           {errored ? (
             <div className="absolute inset-0 flex items-center justify-center bg-white/5">
@@ -70,10 +97,14 @@ const GalleryImageCard = memo(function GalleryImageCard({
             </div>
           ) : (
             <img
-              src={image.src || "/placeholder.svg"}
+              ref={imgRef}
+              src={image.cardSrc || "/placeholder.svg"}
+              srcSet={image.srcSet || undefined}
+              sizes={image.srcSet ? sizes : undefined}
               alt={image.alt}
-              loading="lazy"
+              loading={priority ? "eager" : "lazy"}
               decoding="async"
+              {...(priority ? { fetchPriority: "high" as const } : {})}
               onLoad={() => setLoaded(true)}
               onError={() => setErrored(true)}
               className={`w-full h-full object-cover transition-opacity duration-500 ${
@@ -167,14 +198,16 @@ export function GalleryPageContent({
       // Each gallery can have multiple images - we flatten them into individual items
       if (gallery?.image && Array.isArray(gallery.image)) {
         gallery.image.forEach((img, imageIndex) => {
-          const imageUrl = img?.url || "";
-          const fullImageUrl = imageUrl.startsWith("http")
-            ? imageUrl
-            : `${getStrapiBaseUrl()}${imageUrl}`;
-
           images.push({
             id: `${gallery?.id}-${img?.id}`,
-            src: fullImageUrl,
+            // Original upload (often 6000x4000, several MB) - kept for reference only.
+            src: resolveStrapiUrl(img?.url),
+            // Grid card: browser picks a resized format via srcset/sizes.
+            cardSrc: pickStrapiImage(img, 500),
+            srcSet: strapiSrcSet(img),
+            // Lightbox: ~1000px is plenty for on-screen viewing.
+            viewSrc: pickStrapiImage(img, 1000),
+            thumbSrc: pickStrapiImage(img, 200),
             alt: img?.alternativeText || gallery?.title,
             category: gallery?.category?.slug || "general",
             title: gallery?.title,
@@ -295,6 +328,33 @@ export function GalleryPageContent({
       .slice(0, maxImages); // Limit images if maxImages is specified
   }, [galleryImages, selectedCategory, apiCategories, searchTerm, maxImages]);
 
+  // Keep pulling pages while the selected category has too few photos to
+  // fill the screen. Without this, a category with no matches in the loaded
+  // pages renders nothing, so the grid never reaches its "load more" trigger.
+  const needsMoreImages =
+    !isPreview &&
+    filteredImages.length < MIN_VISIBLE_IMAGES &&
+    galleriesHasMore &&
+    !galleriesError;
+
+  useEffect(() => {
+    if (needsMoreImages && !galleriesLoading && !galleriesLoadingMore) {
+      loadMoreGalleries();
+    }
+  }, [
+    needsMoreImages,
+    galleriesLoading,
+    galleriesLoadingMore,
+    loadMoreGalleries,
+  ]);
+
+  // Still looking for photos for this category: show skeletons, not "empty".
+  const isFindingImages =
+    filteredImages.length === 0 &&
+    !galleriesError &&
+    (galleriesLoading ||
+      (!isPreview && (galleriesLoadingMore || galleriesHasMore)));
+
   const openLightbox = useCallback((index: number) => {
     setSelectedImageIndex(index);
     setIsLightboxOpen(true);
@@ -312,6 +372,25 @@ export function GalleryPageContent({
     : `container mx-auto px-4 py-16 space-y-12 ${className}`;
 
   const aspectRatioClass = isPreview ? "aspect-video" : "aspect-square";
+
+  // Rendered card width per breakpoint (mirrors the grid's column counts) so
+  // the browser downloads the smallest format that still looks sharp.
+  const cardSizes = isPreview
+    ? "(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
+    : "(min-width: 1280px) 25vw, (min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw";
+
+  const lightboxImages = useMemo(
+    () =>
+      filteredImages.map((img) => ({
+        id: img.id,
+        src: img.viewSrc,
+        thumbSrc: img.thumbSrc,
+        alt: img.alt,
+        title: img.title,
+        description: img.description,
+      })),
+    [filteredImages],
+  );
 
   const content = (
     <>
@@ -426,7 +505,11 @@ export function GalleryPageContent({
           keeping scroll smooth even with 1000+ loaded images */}
       <VirtualizedGalleryGrid
         items={filteredImages}
-        isLoading={galleriesLoading || (galleriesLoadingMore && !isPreview)}
+        isLoading={
+          isFindingImages ||
+          galleriesLoading ||
+          (galleriesLoadingMore && !isPreview)
+        }
         hasMore={galleriesHasMore && !isPreview}
         onLoadMore={loadMoreGalleries}
         columns={
@@ -442,17 +525,20 @@ export function GalleryPageContent({
             aspectRatio={isPreview ? "video" : "square"}
           />
         }
+        getItemKey={(image: any) => image.id}
         renderItem={(image: any, index) => (
           <GalleryImageCard
             image={image}
             index={index}
             aspectRatioClass={aspectRatioClass}
             onOpen={openLightbox}
+            priority={index < MIN_VISIBLE_IMAGES}
+            sizes={cardSizes}
           />
         )}
       />
 
-      {!galleriesLoading && filteredImages.length === 0 && (
+      {!isFindingImages && !galleriesError && filteredImages.length === 0 && (
         <div className="text-center py-16">
           <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
             <Search className="h-12 w-12 text-gray-400" />
@@ -526,13 +612,7 @@ export function GalleryPageContent({
 
       {/* Common ImageLightbox Component */}
       <ImageLightbox
-        images={filteredImages.map((img) => ({
-          id: img.id,
-          src: img.src,
-          alt: img.alt,
-          title: img.title,
-          description: img.description,
-        }))}
+        images={lightboxImages}
         isOpen={isLightboxOpen}
         initialIndex={selectedImageIndex || 0}
         onClose={closeLightbox}

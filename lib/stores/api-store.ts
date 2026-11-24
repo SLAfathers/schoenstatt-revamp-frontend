@@ -726,7 +726,10 @@ export const useApiStore = create<ApiState>((set, get) => ({
       // Build query parameters for galleries with full population
       const params = {
         populate: "*", // Populate all relations
-        sort: "date:desc",
+        // Tie-break on id: albums often share a date, and without a unique
+        // sort key the database may order them differently on each page
+        // request, causing duplicates or missing albums across pages.
+        sort: ["date:desc", "id:desc"],
         pagination: {
           page: 1,
           pageSize: 12, // Load 12 items per page for better performance
@@ -770,8 +773,12 @@ export const useApiStore = create<ApiState>((set, get) => ({
     const state = get();
 
     // Don't load more if already loading or no more data available
-    // Prevent duplicate requests
+    // Prevent duplicate requests. Also wait for the first page: requesting
+    // page 2 while page 1 is in flight let page 2 overwrite page 1, so the
+    // gallery sometimes started from older albums.
     if (
+      state.galleriesLoading ||
+      state.galleries.length === 0 ||
       state.galleriesLoadingMore ||
       !state.galleriesHasMore ||
       state.galleriesPendingRequest
@@ -791,7 +798,7 @@ export const useApiStore = create<ApiState>((set, get) => ({
       // Build query parameters for next page
       const params = {
         populate: "*",
-        sort: "date:desc",
+        sort: ["date:desc", "id:desc"],
         pagination: {
           page: nextPage,
           pageSize: 12,
@@ -807,8 +814,22 @@ export const useApiStore = create<ApiState>((set, get) => ({
       );
       const { data, meta } = response.data;
 
+      // A refresh (fetchGalleries) may have reset the list while this request
+      // was in flight; drop this stale page instead of mixing it in.
+      const current = get();
+      if (current.galleries !== state.galleries || current.galleriesLoading) {
+        set({ galleriesLoadingMore: false, galleriesPendingRequest: false });
+        return;
+      }
+
+      // Append to the latest list (not the snapshot taken before the request)
+      // and skip any album already present.
+      const seen = new Set(current.galleries.map((g) => g.id));
       set({
-        galleries: [...state.galleries, ...data], // Append new galleries
+        galleries: [
+          ...current.galleries,
+          ...data.filter((g) => !seen.has(g.id)),
+        ],
         galleriesLoadingMore: false,
         galleriesError: null,
         galleriesPage: nextPage,
